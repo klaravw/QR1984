@@ -3,102 +3,90 @@
 #include <cuda.h>
 #include <omp.h>
 
-// original LU code:
-// https://en.wikipedia.org/wiki/LU_decomposition
-
 // sets type of matrices
 #define dfloat double
-
-
-// hostLU:
-// a. compute the LU decompositions of N matrices of size MxM
-// b. assumes each matrix stored in column major
 
 __host__ __device__ void printMatrix(dfloat *A, int M){
   printf("[");
   for(int j=0;j<M;++j){ // row
     for(int i=0;i<M;++i){ // column
-      printf("%17.15e", A[j+i*M]);
+      printf("%17.15e ", A[j+i*M]);
       if(i == M-1) 
         if (j == M-1) printf("]\n");
         else printf(";\n");
     }
   }
-  
 }
 
-void hostMGSnoN(int M, const dfloat *A, dfloat *Q, dfloat *R, dfloat tol){
+void hostMGS(int M, int N, const dfloat *A, dfloat *Q, dfloat *R, dfloat tol){
 
-  int i, j, j2;
+  for(int n=0;n<N;++n){
+    int i, j, j2;
 
-  // tmp helper
-  
-  // i will be column
-  // j will be row
-  dfloat *V  = (dfloat*) calloc(M*M, sizeof(dfloat));
+    const dfloat *An = A+n*M*M;
+    dfloat *Qn = Q+n*M*M;
+    dfloat *Rn = R+n*M*M;
 
-  // column major storage
-  for (j = 0; j < M; ++j) {
-    for (i = 0; i < M; ++i) {
-      V[j + M*i] = A[j + M*i];
-    }
-  }
-  // loop over columns
-  for (i = 0; i < M; ++i){
-    dfloat tmp = 0;
-    for (j = 0; j<M; ++j){
-      tmp += V[j + M*i]*V[j + M*i];
-    }
-    
-    R[i + M*i] = sqrt(tmp);
-    printf("i:%d, j:%d, %e\n", i, j, sqrt(tmp));
-    for (j = 0; j<M; ++j){
-      Q[j + M*i] = V[j + M*i]/R[i + M*i];
-    }
+    // i will be column
+    // j will be row
+    dfloat *V  = (dfloat*) calloc(M*M, sizeof(dfloat));
+    dfloat *Vn = V+n*M*M;
 
-    for (j2 = 0; j2 < M; ++j2){ 
-      for (j = i + 1; j < M; ++j){
-        R[i + M*j] += Q[j2 + M*i]*V[j2 + M*j];
-        printf("i:%d, j:%d, lastR:%e\n", i, j, R[i + M*j]);
+    // column major storage
+    for (j = 0; j < M; ++j) {
+      for (i = 0; i < M; ++i) {
+        Vn[j + M*i] = An[j + M*i];
       }
     }
-    for (j2 = 0; j2 < M; ++j2){
-      for (j = i + 1; j < M; ++j){
-        V[j2 + M*j] = V[j2 + M*j]-R[i + M*j]*Q[j2 + M*i];
-        printf("i:%d, j:%d, lastV:%e\n", i, j, V[j2 + M*j]);
+    // loop over columns
+    for (i = 0; i < M; ++i){
+      dfloat tmp = 0;
+      for (j = 0; j<M; ++j){
+        tmp += Vn[j + M*i]*Vn[j + M*i];
       }
+      
+      R[i + M*i] = sqrt(tmp);
+      for (j = 0; j<M; ++j){
+        Qn[j + M*i] = Vn[j + M*i]/Rn[i + M*i];
+      }
+
+      for (j2 = 0; j2 < M; ++j2){ 
+        for (j = i + 1; j < M; ++j){
+          Rn[i + M*j] += Qn[j2 + M*i]*Vn[j2 + M*j];
+        }
+      }
+      for (j2 = 0; j2 < M; ++j2){
+        for (j = i + 1; j < M; ++j){
+          Vn[j2 + M*j] = Vn[j2 + M*j]-Rn[i + M*j]*Qn[j2 + M*i];
+        }
+      }
+      
     }
-    
   }
 }
-// I would like to take V out of the parameters
 
-__global__ void deviceMGSNoNv0(int N, int M, const dfloat *A, dfloat *Q, dfloat *R, dfloat *V, dfloat *ans, dfloat *ans2){
-
+__global__ void deviceMGSv0(int N, int M, const dfloat *A, dfloat *Q, dfloat *R, dfloat *V, dfloat *ans, dfloat *ans2){
   
   // loop over matrices
-  //  for(int n=0;n<N;++n)
   int n = blockIdx.x;
   int j = threadIdx.x;
 
-  int i, k, j2;
+  int i, j2;
 
-  //dfloat *V = (dfloat*) malloc(N*M*M*sizeof(dfloat));
-  //__shared__ dfloat s_V[sM][sM];
-  // // pointer to nth A and LU matrix storage
-  // const dfloat *An = A+n*M*M;
-  // dfloat *LUn = LU+n*M*M;
+  const dfloat *An = A+n*M*M;
+  dfloat *Qn = Q+n*M*M;
+  dfloat *Rn = R+n*M*M;
+  dfloat *Vn = V+n*M*M;
 
   // i will be column
   // j will be row
   
   // note we assume column major storage (for coalescing)
   for (i = 0; i < M; ++i) {
-    V[j + M*i] = A[j + M*i];
+    Vn[j + M*i] = An[j + M*i];
   }
 
   // loop over columns
-  //if(j<M){
   for (i = 0; i < M; ++i) {
 
     __syncthreads();
@@ -106,57 +94,35 @@ __global__ void deviceMGSNoNv0(int N, int M, const dfloat *A, dfloat *Q, dfloat 
     if(j==0) ans2[0] = 0;
     __syncthreads();
 
-    //printf("3.55%e\n", V[j + M*i]);
-    dfloat an = V[j + M*i]*V[j + M*i];
-    //printf("%e\n", an);
-    //__syncthreads();
+    dfloat an = Vn[j + M*i]*Vn[j + M*i];
     // an uninterruptible increment
     atomicAdd(ans, an);
-    //printf("3.5%e\n", ans[0]);
 
     __syncthreads();
 
-    printf("i:%d, j:%d, R:%e\n", i, j, sqrt(ans[0]));
     if(j==0)
-    R[i + M*i] = sqrt(ans[0]);
+    Rn[i + M*i] = sqrt(ans[0]);
 
-    //printf("4%e\n",sqrt(ans[0]));
-    Q[j + M*i] = V[j + M*i]/R[i + M*i];
-    //printf("5%e\n",R[i + M*i]);
-
-    //loop over rows starting from diagonal
-          //for (j = i + 1; j < M; ++j)
+    Qn[j + M*i] = Vn[j + M*i]/Rn[i + M*i];
   
     __syncthreads();
-    // dfloat tmp1 = R[i + M*j];
-    // dfloat tmp2 = V[i + M*j];
-    //if(j>=i+1){
+    for (j2 = i + 1; j2 < M; ++j2){
+      dfloat an2 = Qn[j + M*i]*Vn[j + M*j2];
     
-    __syncthreads();
-      for (j2 = i + 1; j2 < M; ++j2){
-        dfloat an2 = Q[j + M*i]*V[j + M*j2];
-      
-        __syncthreads();
-        if(j==0) ans2[0] = 0;
-        __syncthreads();
-        //printf("1%e\n",an2);
-        atomicAdd(ans2, an2); // TW: should use warp or TB reduction
-        __syncthreads();
-        if(j==0)
-        R[i + M*j2] = ans2[0];
-        //tmp1 = ans2[0];
-      }
-        __syncthreads();
-      for (j2 = i + 1; j2 < M; ++j2){
-        printf("2i:%d, j:%d, %e\n", i, j, ans2[0]);
-        V[j + M*j2] = V[j + M*j2]-R[i + M*j2]*Q[j + M*i];
-        //tmp2 = V[j + M*j2]-R[i + M*j2]*Q[j + M*i];
-        printf("3i:%d, j:%d, %e\n", i, j, V[j + M*j2] );
-      }
+      __syncthreads();
+      if(j==0) ans2[0] = 0;
+      __syncthreads();
+
+      atomicAdd(ans2, an2); // will change to warp or BT reduction
+      __syncthreads();
+      if(j==0)
+      Rn[i + M*j2] = ans2[0];
     }
-    // R[i + M*j] = tmp1;
-    // V[i + M*j] = tmp2;
-  //}//}
+      __syncthreads();
+    for (j2 = i + 1; j2 < M; ++j2){
+      Vn[j + M*j2] = Vn[j + M*j2]-Rn[i + M*j2]*Qn[j + M*i];
+    }
+  }
 }
 
 int main(int argc, char **argv){
@@ -180,113 +146,72 @@ int main(int argc, char **argv){
   dfloat *h_R = (dfloat*) calloc(N*M*M, sizeof(dfloat));
 
   for(int n=0;n<N;++n){
-    dfloat *A = h_A + n*M*M;
+    dfloat *An = h_A + n*M*M;
     for(int j=0;j<M;++j){ // row
       for(int i=0;i<M;++i){ // column
-	      A[j+i*M] = j+(i*M)+1;
-        if(i==2 & j==2){
-          A[j+i*M] = 10;
-        }
+	      An[j+i*M] = drand48();
       }
     }
   }
-  A[2+2*M]=10;
 
   printf("A:\n");
   printMatrix(h_A, M);
 
   dfloat tol = 1e-14;
-  hostMGSnoN(M, h_A, Q, R, tol);
+  hostMGS(M, N, h_A, h_Q, h_R, tol);
 
   printf("Host MGS\n-----------\n");
   printf("Q:\n");
-  printMatrix(Q, M);
+  printMatrix(h_Q, M);
   printf("R:\n");
-  printMatrix(R, M);
+  printMatrix(h_R, M);
 
   dfloat *c_A, *c_Q, *c_R, *c_V;
   dfloat *h_gpuQ = (dfloat*) calloc(N*M*M, sizeof(dfloat));
   dfloat *h_gpuR = (dfloat*) calloc(N*M*M, sizeof(dfloat));
-  dfloat *h_ans = (dfloat*) calloc(N, sizeof(dfloat));
-  dfloat *h_ans2 = (dfloat*) calloc(N, sizeof(dfloat));
+
   cudaMalloc(&c_A, N*M*M*sizeof(dfloat));
   cudaMalloc(&c_Q, N*M*M*sizeof(dfloat));
   cudaMalloc(&c_R, N*M*M*sizeof(dfloat));
+  // won't need temporary V matrix in global memory in next version:
   cudaMalloc(&c_V, N*M*M*sizeof(dfloat));
 
   cudaMemcpy(c_A, h_A, N*M*M*sizeof(dfloat), cudaMemcpyHostToDevice);
+
+  // will be avoided in next version with shared memory:
   dfloat *ans, *ans2;
+  dfloat *h_ans = (dfloat*) calloc(N*M*M, sizeof(dfloat));
+  dfloat *h_ans2 = (dfloat*) calloc(N*M*M, sizeof(dfloat));
   cudaMalloc(&ans, N*M*M*sizeof(dfloat));
   cudaMalloc(&ans2, N*M*M*sizeof(dfloat));
-cudaMemcpy(ans, h_ans, N*sizeof(dfloat), cudaMemcpyHostToDevice);
-cudaMemcpy(ans2, h_ans2, N*sizeof(dfloat), cudaMemcpyHostToDevice);
+  cudaMemcpy(ans, h_ans, N*M*M*sizeof(dfloat), cudaMemcpyHostToDevice);
+  cudaMemcpy(ans2, h_ans2, N*M*M*sizeof(dfloat), cudaMemcpyHostToDevice);
 
-
-  deviceMGSNoNv0<<<N,M>>>(N, M, c_A, c_Q, c_R, c_V, ans, ans2);
+  deviceMGSv0<<<N,M>>>(N, M, c_A, c_Q, c_R, c_V, ans, ans2);
   cudaGetLastError();
+  
   cudaMemcpy(h_gpuQ, c_Q, N*M*M*sizeof(dfloat), cudaMemcpyDeviceToHost);
   cudaMemcpy(h_gpuR, c_R, N*M*M*sizeof(dfloat), cudaMemcpyDeviceToHost);
   
-  printf("Host gpuMGS\n-----------\n");
+  printf("Device MGS\n-----------\n");
   printf("Q:\n");
   printMatrix(h_gpuQ, M);
   printf("R:\n");
   printMatrix(h_gpuR, M);
-//   // 1. test hostLU
-//   double ticLU = omp_get_wtime();
-//   hostLU(N, M, h_A, h_LU, tol);  
-//   double tocLU = omp_get_wtime();
-//   double elapsedLU = tocLU-ticLU;
-//   dfloat bandwidthLU = (2.*N*M*M/(elapsedLU*1.e9))*sizeof(dfloat); // matrix bandwidth in GB/s (ignoring caching)
-  
-//   printf("hostLU,    M:%02d, time:%3.2e s, diff:%3.2e, throughput:%3.2f GB/s\n",
-// 	 M, elapsedLU, 0., bandwidthLU);
 
-//   // 1.0 v0 kernel run
-//   dfloat elapsedTimes[1000];
-//   dfloat *c_A, *c_LU;
-//   dfloat *h_gpuLU = (dfloat*) calloc(N*M*M, sizeof(dfloat));
-//   cudaMalloc(&c_A, N*M*M*sizeof(dfloat));
-//   cudaMalloc(&c_LU, N*M*M*sizeof(dfloat));
+  dfloat maxDiff =0;
+  for(int n=0;n<N*M*M;++n){
+    dfloat diff = fabs(h_gpuQ[n]-h_Q[n]);
+    maxDiff = (maxDiff>diff) ? maxDiff:diff;
+  }
+  printf("Q diff: %3.2e \n", maxDiff);
 
-//   cudaMemcpy(c_A, h_A, N*M*M*sizeof(dfloat), cudaMemcpyHostToDevice);
-
-//   // warm up
-//   int Nops = 5;
-//   for(int op=0;op<Nops;++op){
-//     runDeviceLU(op, N, M, c_A, c_LU, tol);
-
-//     // zero c_LU on DEVICE
-//     cudaMemset(c_LU, 0, N*M*M*sizeof(dfloat));
-    
-//     elapsedTimes[op] = runDeviceLU(op, N, M, c_A, c_LU, tol);
-    
-//     cudaMemcpy(h_gpuLU, c_LU, N*M*M*sizeof(dfloat), cudaMemcpyDeviceToHost);
-    
-//     dfloat maxDiff =0;
-//     for(int n=0;n<N*M*M;++n){
-//       dfloat diff = fabs(h_gpuLU[n]-h_LU[n]);
-//       maxDiff = (maxDiff>diff) ? maxDiff:diff;
-//     }
-
-//     // matrix bandwidth in GB/s (ignoring caching)
-//     dfloat bandwidthLUop = (2.*N*M*M/(elapsedTimes[op]*1.e9))*sizeof(dfloat); 
-    
-//     printf("kernel:%02d, M:%02d, time:%3.2e s, diff:%3.2e, throughput:%3.2f GB/s\n",
-// 	   op, M, elapsedTimes[op], maxDiff, bandwidthLUop);
-//   }
-  
-// #if 0
-//   // 2. test hostPLU (pivoted LU)
-//   double ticPLU = omp_get_wtime();
-//   hostPLU(N, M, h_A, h_LU, h_P, tol);
-//   double tocPLU = omp_get_wtime();
-//   double elapsedPLU = tocPLU-ticPLU;
-//   dfloat bandwidthPLU = (2.*N*M*M/(elapsedPLU*1.e9))*sizeof(dfloat); // matrix bandwidth in GB/s (ignoring caching)
-  
-//   printf("hostPLU took %g to factorize %d matrices of size %d x %d with throughput %g GB/s\n",
-// 	 elapsedPLU, N, M, M, bandwidthPLU);
-// #endif
+  maxDiff =0;
+  for(int n=0;n<N*M*M;++n){
+    dfloat diff = fabs(h_gpuR[n]-h_R[n]);
+    maxDiff = (maxDiff>diff) ? maxDiff:diff;
+  }
+  printf("R diff: %3.2e \n", maxDiff);
   
   return 0;
 }

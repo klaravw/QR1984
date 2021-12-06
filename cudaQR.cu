@@ -18,7 +18,7 @@ __host__ __device__ void printMatrix(dfloat *A, int M){
   }
 }
 
-void hostMGS(int M, int N, const dfloat *A, dfloat *Q, dfloat *R, dfloat tol){
+void hostMGS(int N, int M, const dfloat *A, dfloat *Q, dfloat *R, dfloat tol){
 
   for(int n=0;n<N;++n){
     int i, j, j2;
@@ -88,7 +88,6 @@ __global__ void deviceMGSv0(int N, int M, const dfloat *A, dfloat *Q, dfloat *R,
 
   // loop over columns
   for (i = 0; i < M; ++i) {
-
     __syncthreads();
     if(j==0) ans[0] = 0;
     if(j==0) ans2[0] = 0;
@@ -97,7 +96,6 @@ __global__ void deviceMGSv0(int N, int M, const dfloat *A, dfloat *Q, dfloat *R,
     dfloat an = Vn[j + M*i]*Vn[j + M*i];
     // an uninterruptible increment
     atomicAdd(ans, an);
-
     __syncthreads();
 
     if(j==0)
@@ -158,7 +156,7 @@ int main(int argc, char **argv){
   printMatrix(h_A, M);
 
   dfloat tol = 1e-14;
-  hostMGS(M, N, h_A, h_Q, h_R, tol);
+  hostMGS(N, M, h_A, h_Q, h_R, tol);
 
   printf("Host MGS\n-----------\n");
   printf("Q:\n");

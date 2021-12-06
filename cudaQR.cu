@@ -15,12 +15,16 @@
 // b. assumes each matrix stored in column major
 
 __host__ __device__ void printMatrix(dfloat *A, int M){
+  printf("[");
   for(int j=0;j<M;++j){ // row
     for(int i=0;i<M;++i){ // column
-      printf("%e ", A[j+i*M]);
-      if(i == M-1) printf("\n");
+      printf("%17.15e", A[j+i*M]);
+      if(i == M-1) 
+        if (j == M-1) printf("]\n");
+        else printf(";\n");
     }
   }
+  
 }
 
 void hostMGSnoN(int M, const dfloat *A, dfloat *Q, dfloat *R, dfloat tol){
@@ -44,72 +48,29 @@ void hostMGSnoN(int M, const dfloat *A, dfloat *Q, dfloat *R, dfloat tol){
     dfloat tmp = 0;
     for (j = 0; j<M; ++j){
       tmp += V[j + M*i]*V[j + M*i];
-      //printf("%e\n", V[j + M*i]);
-      //printf("i:%d, j:%d, %e\n", i, j, tmp);
-      //R[i + M*i] += abs(V[j + M*i]); // using 1 norm to avoid sqrt
     }
     
     R[i + M*i] = sqrt(tmp);
-    //printf("i:%d, j:%d, %e\n", i, j, sqrt(tmp));
-    // printMatrix(V,M);
-    // printf("i:%d, j:%d, %f\n", i, j, tmp);
+    printf("i:%d, j:%d, %e\n", i, j, sqrt(tmp));
     for (j = 0; j<M; ++j){
       Q[j + M*i] = V[j + M*i]/R[i + M*i];
     }
-    //loop over rows starting from diagonal
-    // for (j = i + 1; j < M; ++j){
-    //   for (j2 = 0; j2 < M; ++j2){ // super ugly
-    //     R[i + M*j] += Q[j2 + M*i]*V[j2 + M*j];
-    //   }
-    //   for (j2 = 0; j2 < M; ++j2){ //super ugly
-    //     V[j2 + M*j] = V[j2 + M*j]-R[i + M*j]*Q[j2 + M*i];
-    //     printf("i:%d, j:%d, %e\n", i, j, V[j2 + M*j]);
-    //   }
-    // }
 
-    
-    for (j2 = 0; j2 < M; ++j2){ // super ugly
+    for (j2 = 0; j2 < M; ++j2){ 
       for (j = i + 1; j < M; ++j){
         R[i + M*j] += Q[j2 + M*i]*V[j2 + M*j];
-        printf("2i:%d, j:%d, %e\n", i, j, R[i + M*j]);
+        printf("i:%d, j:%d, lastR:%e\n", i, j, R[i + M*j]);
       }
     }
-    for (j2 = 0; j2 < M; ++j2){ //super ugly
+    for (j2 = 0; j2 < M; ++j2){
       for (j = i + 1; j < M; ++j){
         V[j2 + M*j] = V[j2 + M*j]-R[i + M*j]*Q[j2 + M*i];
-        printf("3i:%d, j:%d, %e\n", i, j, V[j + M*j2] );
-        //printf("i:%d, j:%d, %e\n", i, j, V[j2 + M*j]);
+        printf("i:%d, j:%d, lastV:%e\n", i, j, V[j2 + M*j]);
       }
     }
     
   }
 }
-
-// ___device___ void sumReduction(dfloat *s_V, int sM, int j){
-//   int alive = (sM+1)/2;
-//   while(alive>=1){
-  
-//     if(j<alive){
-//       if (fabs(s_V[j]) < fabs(s_V[j+alive])){
-//         s_V[j] = s_V[j+alive];
-//       } 
-//     }
-//     if(alive>32)
-//       __syncthreads();
-    
-//     alive /= 2;
-//   }
-// }
-
-// __global__ void printMatrixKernel(dfloat *A, int M){
-//   for(int j=0;j<M;++j){ // row
-//     for(int i=0;i<M;++i){ // column
-//       printf("%e ", A[j+i*M]);
-//       if(i == M-1) printf("\n");
-//     }
-//   }
-// }
-
 // I would like to take V out of the parameters
 
 __global__ void deviceMGSNoNv0(int N, int M, const dfloat *A, dfloat *Q, dfloat *R, dfloat *V, dfloat *ans, dfloat *ans2){
@@ -139,51 +100,63 @@ __global__ void deviceMGSNoNv0(int N, int M, const dfloat *A, dfloat *Q, dfloat 
   // loop over columns
   //if(j<M){
   for (i = 0; i < M; ++i) {
+
     __syncthreads();
+    if(j==0) ans[0] = 0;
+    if(j==0) ans2[0] = 0;
+    __syncthreads();
+
     //printf("3.55%e\n", V[j + M*i]);
     dfloat an = V[j + M*i]*V[j + M*i];
     //printf("%e\n", an);
-    __syncthreads();
+    //__syncthreads();
     // an uninterruptible increment
     atomicAdd(ans, an);
     //printf("3.5%e\n", ans[0]);
 
-    //printf("i:%d, j:%d, %e\n", i, j, sqrt(ans[0]));
+    __syncthreads();
+
+    printf("i:%d, j:%d, R:%e\n", i, j, sqrt(ans[0]));
+    if(j==0)
     R[i + M*i] = sqrt(ans[0]);
+
     //printf("4%e\n",sqrt(ans[0]));
     Q[j + M*i] = V[j + M*i]/R[i + M*i];
     //printf("5%e\n",R[i + M*i]);
-    __syncthreads();
+
     //loop over rows starting from diagonal
           //for (j = i + 1; j < M; ++j)
-    
-    //R[i + M*j] += Q[j2 + M*i]*V[j2 + M*j];
+  
     __syncthreads();
-    // dfloat tmp;
-    // tmp = V[j + M*j]-R[i + M*j]*Q[j + M*i];
+    // dfloat tmp1 = R[i + M*j];
+    // dfloat tmp2 = V[i + M*j];
+    //if(j>=i+1){
     
-    // dfloat an2 = Q[j + M*i]*V[j + M*i];
-    // tmp = atomicAdd(ans2, an2);
-
-    // if (j>i){
-    //   R[i + M*j] = ans2[0];
-    // }
-    //printf("%e\n",Q[j + M*i]);
     __syncthreads();
-    for (j2 = i + 1; j2 < M; ++j2){
-      dfloat an2 = Q[j + M*i]*V[j + M*j2];
-      //printf("1%e\n",an2);
-      atomicAdd(ans2, an2);
-      R[i + M*j2] = ans2[0];
+      for (j2 = i + 1; j2 < M; ++j2){
+        dfloat an2 = Q[j + M*i]*V[j + M*j2];
+      
+        __syncthreads();
+        if(j==0) ans2[0] = 0;
+        __syncthreads();
+        //printf("1%e\n",an2);
+        atomicAdd(ans2, an2); // TW: should use warp or TB reduction
+        __syncthreads();
+        if(j==0)
+        R[i + M*j2] = ans2[0];
+        //tmp1 = ans2[0];
+      }
+        __syncthreads();
+      for (j2 = i + 1; j2 < M; ++j2){
+        printf("2i:%d, j:%d, %e\n", i, j, ans2[0]);
+        V[j + M*j2] = V[j + M*j2]-R[i + M*j2]*Q[j + M*i];
+        //tmp2 = V[j + M*j2]-R[i + M*j2]*Q[j + M*i];
+        printf("3i:%d, j:%d, %e\n", i, j, V[j + M*j2] );
+      }
     }
-      __syncthreads();
-    for (j2 = i + 1; j2 < M; ++j2){
-      printf("2i:%d, j:%d, %e\n", i, j, ans2[0]);
-      V[j + M*j2] = V[j + M*j2]-R[i + M*j2]*Q[j + M*i];
-      printf("3i:%d, j:%d, %e\n", i, j, V[j + M*j2] );
-    }
-
-  }//}
+    // R[i + M*j] = tmp1;
+    // V[i + M*j] = tmp2;
+  //}//}
 }
 
 int main(int argc, char **argv){
@@ -234,6 +207,8 @@ int main(int argc, char **argv){
   dfloat *c_A, *c_Q, *c_R, *c_V;
   dfloat *h_gpuQ = (dfloat*) calloc(N*M*M, sizeof(dfloat));
   dfloat *h_gpuR = (dfloat*) calloc(N*M*M, sizeof(dfloat));
+  dfloat *h_ans = (dfloat*) calloc(N, sizeof(dfloat));
+  dfloat *h_ans2 = (dfloat*) calloc(N, sizeof(dfloat));
   cudaMalloc(&c_A, N*M*M*sizeof(dfloat));
   cudaMalloc(&c_Q, N*M*M*sizeof(dfloat));
   cudaMalloc(&c_R, N*M*M*sizeof(dfloat));
@@ -243,6 +218,10 @@ int main(int argc, char **argv){
   dfloat *ans, *ans2;
   cudaMalloc(&ans, N*M*M*sizeof(dfloat));
   cudaMalloc(&ans2, N*M*M*sizeof(dfloat));
+cudaMemcpy(ans, h_ans, N*sizeof(dfloat), cudaMemcpyHostToDevice);
+cudaMemcpy(ans2, h_ans2, N*sizeof(dfloat), cudaMemcpyHostToDevice);
+
+
   deviceMGSNoNv0<<<N,M>>>(N, M, c_A, c_Q, c_R, c_V, ans, ans2);
   cudaGetLastError();
   cudaMemcpy(h_gpuQ, c_Q, N*M*M*sizeof(dfloat), cudaMemcpyDeviceToHost);

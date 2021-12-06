@@ -57,15 +57,31 @@ void hostMGSnoN(int M, const dfloat *A, dfloat *Q, dfloat *R, dfloat tol){
       Q[j + M*i] = V[j + M*i]/R[i + M*i];
     }
     //loop over rows starting from diagonal
-    for (j = i + 1; j < M; ++j){
-      for (j2 = 0; j2 < M; ++j2){ // super ugly
+    // for (j = i + 1; j < M; ++j){
+    //   for (j2 = 0; j2 < M; ++j2){ // super ugly
+    //     R[i + M*j] += Q[j2 + M*i]*V[j2 + M*j];
+    //   }
+    //   for (j2 = 0; j2 < M; ++j2){ //super ugly
+    //     V[j2 + M*j] = V[j2 + M*j]-R[i + M*j]*Q[j2 + M*i];
+    //     printf("i:%d, j:%d, %e\n", i, j, V[j2 + M*j]);
+    //   }
+    // }
+
+    
+    for (j2 = 0; j2 < M; ++j2){ // super ugly
+      for (j = i + 1; j < M; ++j){
         R[i + M*j] += Q[j2 + M*i]*V[j2 + M*j];
-      }
-      for (j2 = 0; j2 < M; ++j2){ //super ugly
-        V[j2 + M*j] = V[j2 + M*j]-R[i + M*j]*Q[j2 + M*i];
-        printf("i:%d, j:%d, %e\n", i, j, V[j2 + M*j]);
+        printf("2i:%d, j:%d, %e\n", i, j, R[i + M*j]);
       }
     }
+    for (j2 = 0; j2 < M; ++j2){ //super ugly
+      for (j = i + 1; j < M; ++j){
+        V[j2 + M*j] = V[j2 + M*j]-R[i + M*j]*Q[j2 + M*i];
+        printf("3i:%d, j:%d, %e\n", i, j, V[j + M*j2] );
+        //printf("i:%d, j:%d, %e\n", i, j, V[j2 + M*j]);
+      }
+    }
+    
   }
 }
 
@@ -104,7 +120,7 @@ __global__ void deviceMGSNoNv0(int N, int M, const dfloat *A, dfloat *Q, dfloat 
   int n = blockIdx.x;
   int j = threadIdx.x;
 
-  int i, k;
+  int i, k, j2;
 
   //dfloat *V = (dfloat*) malloc(N*M*M*sizeof(dfloat));
   //__shared__ dfloat s_V[sM][sM];
@@ -121,36 +137,53 @@ __global__ void deviceMGSNoNv0(int N, int M, const dfloat *A, dfloat *Q, dfloat 
   }
 
   // loop over columns
-  if(j<M){
+  //if(j<M){
   for (i = 0; i < M; ++i) {
-    
     __syncthreads();
-
-    dfloat an = V[j + M*i];
+    //printf("3.55%e\n", V[j + M*i]);
+    dfloat an = V[j + M*i]*V[j + M*i];
     //printf("%e\n", an);
     __syncthreads();
     // an uninterruptible increment
     atomicAdd(ans, an);
-    
+    //printf("3.5%e\n", ans[0]);
+
     //printf("i:%d, j:%d, %e\n", i, j, sqrt(ans[0]));
     R[i + M*i] = sqrt(ans[0]);
+    //printf("4%e\n",sqrt(ans[0]));
     Q[j + M*i] = V[j + M*i]/R[i + M*i];
+    //printf("5%e\n",R[i + M*i]);
     __syncthreads();
     //loop over rows starting from diagonal
           //for (j = i + 1; j < M; ++j)
-    dfloat an2 = Q[j + M*i]*V[j + M*j];
-    atomicAdd(ans2, an2);
+    
     //R[i + M*j] += Q[j2 + M*i]*V[j2 + M*j];
     __syncthreads();
-    dfloat tmp;
-    tmp = V[j + M*j]-R[i + M*j]*Q[j + M*i];
+    // dfloat tmp;
+    // tmp = V[j + M*j]-R[i + M*j]*Q[j + M*i];
+    
+    // dfloat an2 = Q[j + M*i]*V[j + M*i];
+    // tmp = atomicAdd(ans2, an2);
+
+    // if (j>i){
+    //   R[i + M*j] = ans2[0];
+    // }
+    //printf("%e\n",Q[j + M*i]);
     __syncthreads();
-    if (j > i){
-      R[i + M*j] = ans2[0];
-      V[j + M*j] = tmp;
-      printf("i:%d, j:%d, %e\n", i, j, tmp);
+    for (j2 = i + 1; j2 < M; ++j2){
+      dfloat an2 = Q[j + M*i]*V[j + M*j2];
+      //printf("1%e\n",an2);
+      atomicAdd(ans2, an2);
+      R[i + M*j2] = ans2[0];
     }
-  }}
+      __syncthreads();
+    for (j2 = i + 1; j2 < M; ++j2){
+      printf("2i:%d, j:%d, %e\n", i, j, ans2[0]);
+      V[j + M*j2] = V[j + M*j2]-R[i + M*j2]*Q[j + M*i];
+      printf("3i:%d, j:%d, %e\n", i, j, V[j + M*j2] );
+    }
+
+  }//}
 }
 
 int main(int argc, char **argv){
@@ -177,10 +210,14 @@ int main(int argc, char **argv){
     dfloat *A = h_A + n*M*M;
     for(int j=0;j<M;++j){ // row
       for(int i=0;i<M;++i){ // column
-	      A[j+i*M] = i+1;
+	      A[j+i*M] = j+(i*M)+1;
+        if(i==2 & j==2){
+          A[j+i*M] = 10;
+        }
       }
     }
   }
+  A[2+2*M]=10;
 
   printf("A:\n");
   printMatrix(h_A, M);

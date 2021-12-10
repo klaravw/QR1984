@@ -4,7 +4,7 @@ cudaQR: cudaQR.cu
 cudaTestQR:
 	nvcc --use_fast_math -arch=sm_61 -O3 -o cudaQRTest cudaQR.cu -Xcompiler -fopenmp
 	for M in `seq 1 32` ; do \
-		./cudaQRTest 1 $$M ; \
+		./cudaQRTest 20000000 $$M ; \
 	done
 	
 
